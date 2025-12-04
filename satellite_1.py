@@ -70,6 +70,9 @@ OUTPUT_PATHS = {
 # === 新增：面积比例 CSV 路径 ===
 CSV_PATH = os.path.join(output_dir, "area_ratio2D.csv")
 
+# === 新增：计算帧内 部件/帆板 像素面积比例，并写入 CSV ===
+PANEL_NAME = "panel3"   # 帆板物体名（分母）
+PART_NAME  = "hole"     # 部件物体名（分子）
 # 渲染参数
 FOV = 40
 NUM = 50
@@ -499,7 +502,7 @@ class RealOrbitFOVRender:
     # =============================================================
     # 渲染函数
     # =============================================================
-    def render(self, idx, fidx):
+    def render(self, idx, fidx, cal = True):
         print(f"\n--- 渲染 {idx} (数据帧 {fidx}) ---")
 
         # 正常渲染图像
@@ -510,10 +513,8 @@ class RealOrbitFOVRender:
         with open(os.path.join(self.labels_filepath,f"{idx:04d}.txt"),"w") as f:
             f.write(self.get_labels())
 
-        # === 新增：计算帧内 部件/帆板 像素面积比例，并写入 CSV ===
-        PANEL_NAME = "panel3"   # 帆板物体名（分母）
-        PART_NAME  = "hole"     # 部件物体名（分子）
-
+        # 计算帆板和部件的像素面积比例，并写入 CSV
+        # 注意：这里假设帆板和部件在每帧都存在
         result = self.compute_panel_part_area_ratio(PANEL_NAME, PART_NAME)
         if result is not None:
             panel_px, part_px, ratio = result
@@ -529,7 +530,7 @@ class RealOrbitFOVRender:
     # =============================================================
     # 主循环
     # =============================================================
-    def run(self, num_frames, start_frame=0, step=STEP):
+    def run(self, num_frames, start_frame=0, step=STEP, cal = True):
         for i in range(num_frames):
             fi = start_frame + i * step
 
@@ -538,7 +539,7 @@ class RealOrbitFOVRender:
 
             self.update_target(tgt)
             self.update_camera(obs, tgt)
-            self.render(i+1, fi)
+            self.render(i+1, fi, cal)
             
 
 # ===================================================================
@@ -547,4 +548,4 @@ class RealOrbitFOVRender:
 if __name__=="__main__":
 
     R = RealOrbitFOVRender(output_dir, fov=FOV)
-    R.run(NUM, START, step=STEP)
+    R.run(NUM, START, step=STEP, cal=True)
