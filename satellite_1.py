@@ -49,9 +49,7 @@ print("="*60 + "\n")
 
 
 # 单体部件（你想单独做 YOLO 标签的物体）
-# 例如 BUS、AO、天线……写真实名字即可
-OBJ_NAMES = ['panel1', 'panel2', 'panel3', 'panel4','panel5','panel6','satellite1'] # 若无需求可以留空
-
+OBJ_NAMES = ['panel1', 'panel2', 'panel3', 'panel4','panel5','panel6','satellite1','hole']  # 若无需求可以留空
 
 # STK CSV 路径
 STK_PATHS = {
@@ -62,13 +60,15 @@ STK_PATHS = {
 }
 
 # 输出目录
-
 output_dir = r"E:\jr\SpaceTarget\1\4.output"
-
+os.makedirs(output_dir, exist_ok=True)  # 防止目录不存在
 OUTPUT_PATHS = {
-    "IMAGES": os.path.join(output_dir, 'Data_Real'),
-    "LABELS": os.path.join(output_dir, 'Labels'),
+    "IMAGES": os.path.join(output_dir, "Data_Real"),  
+    "LABELS": os.path.join(output_dir, "Labels"),
 }
+
+# === 新增：面积比例 CSV 路径 ===
+CSV_PATH = os.path.join(output_dir, "area_ratio2D.csv")
 
 # 渲染参数
 FOV = 40
@@ -142,26 +142,26 @@ class RealOrbitFOVRender:
         os.makedirs(self.labels_filepath, exist_ok=True)
 
         # 渲染设置不变
-        self.scene.render.engine = 'CYCLES'#启用光线追踪渲染引擎
+        self.scene.render.engine = 'CYCLES'  # 启用光线追踪渲染引擎
         self.scene.render.image_settings.file_format = 'PNG'
         self.scene.cycles.samples = 128
         self.scene.cycles.device = 'GPU'
         self.scene.cycles.tile_size = 256
+        self.scene.render.image_settings.color_mode = 'RGBA'  #? 启用透明背景
 
-        # 分辨率保持原来的
+        # 分辨率
         self.scene.render.resolution_x = 1280
         self.scene.render.resolution_y = 1280
-        self.scene.render.resolution_percentage = 100#使用完整分辨率
+        self.scene.render.resolution_percentage = 100
 
         # 加载轨道与姿态
         self.load_stk_data()
 
         # 坐标系转化
-        self.scale_factor = 0.001 #将STK的公里单位转换为Blender的米单位
-        self.axis_conversion = Matrix.Rotation(radians(90), 4, 'X') #创建一个4×4旋转矩阵，绕X轴旋转90度
-        #用途：解决STK坐标系（Z轴向上）与Blender坐标系（Y轴向上）的轴向不一致问题
+        self.scale_factor = 0.001  # 将STK的公里单位转换为Blender的米单位
+        self.axis_conversion = Matrix.Rotation(radians(90), 4, 'X')
 
-        # FOV 不动
+        # FOV
         self.camera_fov = fov
         self.camera.data.angle = radians(fov)
 
@@ -173,43 +173,30 @@ class RealOrbitFOVRender:
 
     # =============================================================
     # 读取 STK 位置数据
-  # =============================================================
+    # =============================================================
     def read_stk_position(self, csv_path):
         """读取STK位置数据（极简版）"""
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"文件不存在: {csv_path}")
         
-        # pandas自动识别分隔符和列名
         df = pd.read_csv(csv_path)
-        
-        # 如果列名带单位，清理一次
         df.columns = [c.split()[0] for c in df.columns]
-        
-        # 智能时间解析（自动处理所有格式）
         df['Time'] = pd.to_datetime(df['Time'], format='mixed', dayfirst=False, errors='coerce')
-        
-        # 验证数据
         if df.empty:
             raise ValueError(f"CSV文件为空或格式错误: {csv_path}")
-        
         print(f"✅ 位置数据加载成功: {len(df)} 行")
         return df[['Time', 'x', 'y', 'z', 'vx', 'vy', 'vz']]
 
     def read_stk_euler(self, csv_path):
         """读取STK欧拉角（极简版）"""
         df = pd.read_csv(csv_path)
-        
-        # 清理列名
         df.columns = [c.split()[0] for c in df.columns]
-        
-        # 智能时间解析
         df['Time'] = pd.to_datetime(df['Time'], format='mixed', dayfirst=False, errors='coerce')
-        
         if df.empty:
             raise ValueError(f"CSV文件为空或格式错误: {csv_path}")
-        
         print(f"✅ 姿态数据加载成功: {len(df)} 行")
         return df[['Time', 'A', 'B', 'C']]
+
     # =============================================================
     # 合并 位置 + 姿态
     # =============================================================
@@ -225,29 +212,23 @@ class RealOrbitFOVRender:
 
         merged = merged.dropna().reset_index(drop=True)
         print("位置帧数:", len(pos_df), "姿态帧数:", len(att_df), "合并后帧数:", len(merged))
-
         return merged
 
     # =============================================================
     # 总数据加载函数
     # =============================================================
     def load_stk_data(self):
-
-        # ★★★★★ 你给的四个文件路径 ★★★★★
         obs_pos_path = STK_PATHS["OBS_POS"]
         obs_att_path = STK_PATHS["OBS_ATT"]
         tgt_pos_path = STK_PATHS["TGT_POS"]
         tgt_att_path = STK_PATHS["TGT_ATT"]
 
-        # 读位置
         obs_pos = self.read_stk_position(obs_pos_path)
         tgt_pos = self.read_stk_position(tgt_pos_path)
 
-        # 读姿态
         obs_att = self.read_stk_euler(obs_att_path)
         tgt_att = self.read_stk_euler(tgt_att_path)
 
-        # 时间对齐（merge_asof）
         self.obs_data = self.merge_pos_att(obs_pos, obs_att)
         self.tgt_data = self.merge_pos_att(tgt_pos, tgt_att)
 
@@ -285,7 +266,6 @@ class RealOrbitFOVRender:
     # =============================================================
     def build_follow_mats(self):
         bpy.context.view_layer.update()
-         # 计算 axis 的逆矩阵，用来把物体世界矩阵转换到 axis 坐标系下
         axis_inv = self.axis.matrix_world.inverted()
 
         follow = self.objects[:]   # 直接复制对象列表
@@ -310,23 +290,20 @@ class RealOrbitFOVRender:
         for o in self.follow_objects:
             local_mat = self.follow_local_mats[o.name]
             o.matrix_world = self.axis.matrix_world @ local_mat
-    # 相机=============================================================
+
+    # 相机==========================================================
     def update_camera(self, obs_row, tgt_row):
-        # 1. 相机位置 = 观测者的 STK 位置（轨道）
         cam_pos, _ = self.convert_stk_to_blender(obs_row)
         self.camera.location = cam_pos
 
         bpy.context.view_layer.update()
 
-        # 2. 用 track_target（sat_center 或 axis）算 NDC
         target_world = self.track_target.matrix_world.translation
         ndc = world_to_camera_view(self.scene, self.camera, target_world)
         print(f"NDC center: x={ndc.x:.3f}, y={ndc.y:.3f}, z={ndc.z:.3f}")
 
-        # 3. 光照
         self.light.data.type = 'SUN'
         self.light.data.energy = random.uniform(2.4, 2.5)
-
 
     # =============================================================
     # bbox
@@ -340,16 +317,15 @@ class RealOrbitFOVRender:
 
         xs, ys = [], []
         for v in mesh.vertices:
-            w = obj_eval.matrix_world @ v.co #这一步把局部顶点 v.co 变成世界坐标。
-            ndc = world_to_camera_view(self.scene, cam_eval, w) #投影到相机坐标
+            w = obj_eval.matrix_world @ v.co
+            ndc = world_to_camera_view(self.scene, cam_eval, w)
             if ndc.z >= 0:
                 xs.append(ndc.x)
                 ys.append(1.0 - ndc.y)
-        #❗删除临时 mesh 避免泄漏❗
         obj_eval.to_mesh_clear()
 
         if not xs:
-            print("警告: 对象未出现在相机视野内no things in")
+            print("警告: 对象未出现在相机视野内")
             return None
 
         x1 = float(np.clip(min(xs), 0.0, 1.0))
@@ -361,19 +337,145 @@ class RealOrbitFOVRender:
             return None
 
         return (x1,y1),(x2,y2)
+
     # =============================================================
-    # 把 bbox 转成 YOLO 一行：class cx cy w h（全部归一化）
-    # 这里 box 是 ((x1,y1),(x2,y2))，已经是 YOLO 坐标系（左上为 0,0）
+    # === 新增：渲染单个物体为透明背景，统计像素面积 ===
+    # =============================================================
+    # =============================================================
+    # 渲染单个物体为透明背景 PNG，统计 alpha>0 的像素数
+    # =============================================================
+    def render_object_mask_pixels(self, obj_name: str) -> int:
+        """
+        在当前相机姿态、当前帧下：
+        只渲染 obj_name 这个物体到一个临时 PNG 文件，
+        再读取该 PNG，统计 alpha>0 的像素数，作为该物体在图像中的投影面积（像素）。
+        """
+        scene = self.scene
+        obj = bpy.data.objects.get(obj_name)
+        if obj is None:
+            print(f"⚠ render_object_mask_pixels: 找不到物体 {obj_name}")
+            return 0
+
+        width  = scene.render.resolution_x
+        height = scene.render.resolution_y
+        total_pixels = width * height
+
+        # 备份状态
+        orig_hide_render = {o.name: o.hide_render for o in scene.objects}
+        orig_film_transparent = scene.render.film_transparent
+        orig_filepath = scene.render.filepath
+        orig_material = obj.active_material  # 备份原材质
+
+        tmp_path = os.path.join(self.images_filepath,'white', f"mask_tmp_{obj_name}.png")
+
+        mask_mat = None  # 先设为 None，避免 finally 未定义
+
+        try:
+            # === 1. 创建纯白不透明材质并替换原材质 ===
+            mask_mat = bpy.data.materials.new(name="__mask_mat_temp")
+            mask_mat.use_nodes = True
+
+            # 清空默认节点，自己搭建
+            nt = mask_mat.node_tree
+            for n in list(nt.nodes):
+                nt.nodes.remove(n)
+
+            bsdf = nt.nodes.new('ShaderNodeBsdfPrincipled')
+            output = nt.nodes.new('ShaderNodeOutputMaterial')
+            nt.links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
+
+            bsdf.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+            bsdf.inputs["Alpha"].default_value = 1.0
+            mask_mat.blend_method = 'OPAQUE'
+
+            obj.active_material = mask_mat
+
+            # === 2. 设置透明背景 & RGBA ===
+            scene.render.film_transparent = True
+            scene.render.image_settings.color_mode = 'RGBA'
+
+            # === 3. 控制可见性 ===
+            for o in scene.objects:
+                if o.type in {'CAMERA', 'LIGHT'}:
+                    o.hide_render = False
+                elif o == obj:
+                    o.hide_render = False
+                elif o.type == 'MESH':
+                    o.hide_render = True  # 只隐藏其他 mesh
+                else:
+                    o.hide_render = False
+
+            # === 4. 输出 PNG ===
+            scene.render.filepath = tmp_path
+            bpy.ops.render.render(write_still=True)
+
+            # === 5. 读取 PNG 的 alpha ===
+            img = bpy.data.images.load(tmp_path, check_existing=True)
+            img.reload()  
+            pixels = np.array(img.pixels[:])  # [R,G,B,A, R,G,B,A, ...]
+            if pixels.size == 0:
+                print(f"⚠ render_object_mask_pixels: 图像像素为空, obj={obj_name}")
+                return 0
+
+            alpha = pixels[3::4]
+            max_a = float(alpha.max())
+            obj_pixels = int(np.count_nonzero(alpha > 1e-4))
+
+            print(f"🔍 调试: {obj_name} 的 alpha 最大值 = {max_a:.4f}")
+            print(f"🔹 物体 {obj_name} 像素 = {obj_pixels} / {total_pixels}")
+
+            return obj_pixels
+
+        finally:
+            # === 恢复 hide_render 状态 ===
+            for name, val in orig_hide_render.items():
+                if name in scene.objects:
+                    scene.objects[name].hide_render = val
+
+            scene.render.film_transparent = orig_film_transparent
+            scene.render.filepath = orig_filepath
+
+            # === 恢复原材质 ===
+            obj.active_material = orig_material
+
+            # 删除临时材质
+            if mask_mat is not None and mask_mat.name in bpy.data.materials:
+                bpy.data.materials.remove(mask_mat)
+
+            # 可以视情况删除临时图片文件（如果你不想留在磁盘上）
+            # if os.path.exists(tmp_path):
+            #     os.remove(tmp_path)
+    # =============================================================
+    # === 新增：计算 帆板/部件 像素面积比例，并返回数值 ===
+    # =============================================================
+    def compute_panel_part_area_ratio(self, panel_name: str, part_name: str):
+        panel_pixels = self.render_object_mask_pixels(panel_name)
+        part_pixels  = self.render_object_mask_pixels(part_name)
+
+        if panel_pixels <= 0:
+            print(f"⚠ 帆板 {panel_name} 像素数为 0，无法计算比例")
+            return None
+
+        ratio = part_pixels / panel_pixels
+        print("\n=========== 当前帧 2D 投影面积比例 (像素) ===========")
+        print(f"帆板 (分母) : {panel_name} 像素 = {panel_pixels}")
+        print(f"部件 (分子) : {part_name} 像素 = {part_pixels}")
+        print(f"部件占帆板面积比例 = {ratio:.6f}")
+        print("===================================================\n")
+
+        return panel_pixels, part_pixels, ratio
+
+    # =============================================================
+    # 把 bbox 转成 YOLO 一行
     # =============================================================
     def yolo_line(self, box, class_id):
         (x1,y1),(x2,y2) = box
         w,h = x2-x1, y2-y1
         cx,cy = x1+w/2, y1+h/2
         return f"{class_id} {cx:.9f} {cy:.9f} {w:.9f} {h:.9f}\n"
+
     # =============================================================
     # 生成当前帧所有对象的 YOLO 标签文本
-    # self.objects 里既可能是单一对象，也可能是对象列表（重复组）
-    # 返回一个多行字符串，每行对应一个 bbox
     # =============================================================
     def get_labels(self):
         deps = bpy.context.evaluated_depsgraph_get()
@@ -400,18 +502,34 @@ class RealOrbitFOVRender:
     def render(self, idx, fidx):
         print(f"\n--- 渲染 {idx} (数据帧 {fidx}) ---")
 
+        # 正常渲染图像
         self.scene.render.filepath = os.path.join(self.images_filepath,f"{idx:04d}.png")
         bpy.ops.render.render(write_still=True)
 
-        # 写bbox
+        # 写bbox标签
         with open(os.path.join(self.labels_filepath,f"{idx:04d}.txt"),"w") as f:
             f.write(self.get_labels())
+
+        # === 新增：计算帧内 部件/帆板 像素面积比例，并写入 CSV ===
+        PANEL_NAME = "panel3"   # 帆板物体名（分母）
+        PART_NAME  = "hole"     # 部件物体名（分子）
+
+        result = self.compute_panel_part_area_ratio(PANEL_NAME, PART_NAME)
+        if result is not None:
+            panel_px, part_px, ratio = result
+
+            # 追加写入 CSV
+            # 第一帧时，如果文件为空/不存在，则写表头
+            write_header = (idx == 1 and (not os.path.exists(CSV_PATH) or os.path.getsize(CSV_PATH) == 0))
+            with open(CSV_PATH, "a", encoding="utf-8") as f:
+                if write_header:
+                    f.write("frame,panel_pixels,part_pixels,ratio\n")
+                f.write(f"{idx},{panel_px},{part_px},{ratio}\n")
 
     # =============================================================
     # 主循环
     # =============================================================
     def run(self, num_frames, start_frame=0, step=STEP):
-        
         for i in range(num_frames):
             fi = start_frame + i * step
 
